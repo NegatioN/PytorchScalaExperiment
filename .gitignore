@@ -3,4 +3,5 @@ libtorch/
 .idea/
 .scala-build/
 libtorch.zip
+model.pt
 
