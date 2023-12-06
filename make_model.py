@@ -13,15 +13,33 @@ class MLTModel(nn.Module):
         self.emb = nn.Embedding(n_items, n_factors, _weight=torch.from_numpy(vectors))
         self.it2ind = it2ind_mapping
         self.ind2it = {v:k for k,v in self.it2ind.items()}
+        self.active_it2ind = self.it2ind
+        self.active_ind2it = self.ind2it
+        self.active_emb = self.emb.weight
 
-    # model forward pass
-    def forward(self, user: str, size: int = 5)-> Dict[str, float]:
-        ind = torch.tensor(self.it2ind[user])
+
+    @torch.jit.export
+    def forward(self, item_name: str, size: int = 5)-> Dict[str, float]:
+        ind = torch.tensor(self.active_it2ind[item_name])
         u = self.emb(ind)
-        scores = u @ self.emb.weight.t()
+        scores = u @ self.active_emb.t()
+        if size > len(scores):
+            size = len(scores)
         s, i = scores.topk(size)
-        resp = {self.ind2it[ind.item()]: float(score.item()) for ind, score in zip(i.squeeze(), s.squeeze())}
+        print(scores)
+        resp = {self.active_ind2it[ind.item()]: float(score.item()) 
+                for ind, score in zip(i.squeeze(), s.squeeze())}
         return resp
+
+
+    @torch.jit.export
+    def set_active_items(self, active: List[str]):
+        new_items = [self.it2ind[x] for x in active]
+        new_emb = self.emb.weight[new_items]
+        self.active_ind2it = {new_ind: self.ind2it[old_ind] for new_ind, old_ind in enumerate(new_items)}
+        self.active_it2ind = {v:k for k,v in self.active_ind2it.items()}
+        self.active_emb = new_emb
+
 
     def export(self, path='model.pt'):
         m = torch.jit.script(self)
@@ -31,8 +49,8 @@ class MLTModel(nn.Module):
 
 
 
-with open('model.json', 'r') as f:
-    rows = [json.loads(line) for line in f]
+#with open('model.json', 'r') as f:
+#    rows = [json.loads(line) for line in f]
 
 real_model_data = {x['contentId']: x['factors'] for x in rows}
 
@@ -48,3 +66,4 @@ sm = model.export()
 
 sm("dna")
 
+sm.set_active_items(["dna", "inntrengeren"])
