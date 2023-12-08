@@ -20,13 +20,12 @@ class MLTModel(nn.Module):
 
     @torch.jit.export
     def forward(self, item_name: str, size: int = 5)-> Dict[str, float]:
-        ind = torch.tensor(self.active_it2ind[item_name])
+        ind = torch.tensor(self.it2ind[item_name])
         u = self.emb(ind)
         scores = u @ self.active_emb.t()
         if size > len(scores):
             size = len(scores)
         s, i = scores.topk(size)
-        print(scores)
         resp = {self.active_ind2it[ind.item()]: float(score.item()) 
                 for ind, score in zip(i.squeeze(), s.squeeze())}
         return resp
@@ -49,8 +48,8 @@ class MLTModel(nn.Module):
 
 
 
-#with open('model.json', 'r') as f:
-#    rows = [json.loads(line) for line in f]
+with open('/home/n651042/projects/OnnxALSInScala/data/model.json', 'r') as f:
+    rows = [json.loads(line) for line in f]
 
 real_model_data = {x['contentId']: x['factors'] for x in rows}
 
@@ -67,3 +66,7 @@ sm = model.export()
 sm("dna")
 
 sm.set_active_items(["dna", "inntrengeren"])
+
+#i = sm.it2ind["dna"]
+#it = sm.emb.weight[i]
+#print(i, it)
