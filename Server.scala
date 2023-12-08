@@ -19,23 +19,31 @@ import org.http4s.dsl.io._
 import org.http4s.implicits._
 import org.pytorch.{IValue, Module}
 
+object Server extends IOApp {
 
-object ContentIdQueryParamMatcher extends QueryParamDecoderMatcher[String]("contentId")
-object Async2 extends IOApp {
-  class ModelRepo(cache: Ref[IO, Module]) {
-    def asset(name: String): IO[Module] = cache.get
+  object ContentIdQPM extends QueryParamDecoderMatcher[String]("contentId")
+  object UserIdQPM extends QueryParamDecoderMatcher[String]("userId")
+  object SizeQPM extends OptionalQueryParamDecoderMatcher[Int]("size")
+  object CandidatesQPM extends OptionalQueryParamDecoderMatcher[String]("candidates")
+
+
+  case class RecommendRequest(id: String, size: Int, candidates: Option[Set[String]])
+
+  class ModelRepo(cache: Ref[IO, Recommender]) {
+    // TODO have several recommenders in a map
+    def asset(name: String): IO[Recommender] = cache.get
   }
 
   object ModelRepo extends {
-    def load(current: Option[OffsetDateTime]): IO[Module] =
+    def load(current: Option[OffsetDateTime]): IO[Recommender] =
       IO.blocking {
-        println("Called Load")
-        Module.load("model.pt")
+        // TODO download a model
+        Recommender(Module.load("model.pt"), Set.empty)
       }
 
     def resource: Resource[IO, ModelRepo] =
       for {
-        ref <- Resource.eval(Ref.of[IO, Module](Module.load("model.pt")))
+        ref <- Resource.eval(Ref.of[IO, Recommender](Recommender(Module.load("model.pt"), Set.empty)))
         sig <- Resource.eval(fs2.concurrent.SignallingRef.of[IO, Boolean](false))
         runUpdate =
           (fs2.Stream.emit[IO, FiniteDuration](0.second) ++ fs2.Stream.awakeEvery[IO](10.seconds))
@@ -50,22 +58,35 @@ object Async2 extends IOApp {
 
   }
 
-  def modelService(mycache: ModelRepo) = HttpRoutes.of[IO] {
-    case GET -> Root => {
-      Ok(s"Hello, World!")
-    }
-    case GET -> Root / recommenderType / "mlt" :? ContentIdQueryParamMatcher(contentId) =>
-      val out = for {
-        module <- mycache.asset("a")
-        recs = module.runMethod("forward", IValue.from(contentId))
-        resp = recs.toDictStringKey.asScala.map { case (k, v) => (k, v.toDouble) }.toMap
+  val defaultSize = 5
+  case class Recommender(model: Module, strategy: Set[String])
 
-      } yield (resp)
-      Ok(out)
+  def recommend(rr: RecommendRequest, rec: Recommender): Seq[(String, Double)] = {
+    val recs = rec.model.runMethod("forward", IValue.from(rr.id), IValue.from(rr.size))
+    recs.toDictStringKey.asScala.map { case (k, v) => (k, v.toDouble) }.toSeq.sortBy(-_._2)
+  }
+
+  def modelService(modelRepo: ModelRepo) = HttpRoutes.of[IO] {
+    case GET -> Root => Ok(s"Hello, World!")
+
+    case GET -> Root / "mlt" / recommenderName :? ContentIdQPM(contentId) +& SizeQPM(size) +& CandidatesQPM(candidates) =>
+      val rr = RecommendRequest(contentId, size.getOrElse(defaultSize), candidates.map(_.split(",").toSet))
+      val resp = for {
+        recommender <- modelRepo.asset(recommenderName)
+      } yield recommend(rr, recommender)
+      Ok(resp)
+
+    case GET -> Root / "recommend" / recommenderName :? UserIdQPM(userId) +& SizeQPM(size) +& CandidatesQPM(candidates) =>
+      val rr = RecommendRequest(userId, size.getOrElse(defaultSize), candidates.map(_.split(",").toSet))
+      val resp = for {
+        recommender <- modelRepo.asset(recommenderName)
+      } yield recommend(rr, recommender)
+      Ok(resp)
+
+    case GET -> Root / "_" / "health" => Ok("Healthy") // TODO ensure we have recommenders loaded.
   }
 
   override def run(args: List[String]): IO[ExitCode] = {
-    println("try to get cache")
     ModelRepo.resource.use{ cache =>
       BlazeServerBuilder[IO]
         .bindHttp(8080, "localhost")
