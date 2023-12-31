@@ -1,6 +1,5 @@
 # !pip install torch==2.1.0
 import numpy as np
-import json
 import torch
 import torch.nn as nn
 from typing import *
@@ -46,18 +45,13 @@ class MLTModel(nn.Module):
         return m
     
 
+model_data = {'dna': [1.0, 1.0, 1.0], 'inntrengeren': [0.2, 0.2, 0.2]}
+model_data.update({str(i): np.random.randn(3).tolist() for i in range(1000)})
 
-
-with open('/home/n651042/projects/OnnxALSInScala/data/model.json', 'r') as f:
-    rows = [json.loads(line) for line in f]
-
-real_model_data = {x['contentId']: x['factors'] for x in rows}
-
-vectors = np.array([x for x in real_model_data.values()])
-name2ind = {n:i for i, n in enumerate(real_model_data.keys())}
+vectors = np.array([x for x in model_data.values()])
+name2ind = {n:i for i, n in enumerate(model_data.keys())}
 
 model = MLTModel(name2ind, vectors)
-
 
 model("dna")
 
